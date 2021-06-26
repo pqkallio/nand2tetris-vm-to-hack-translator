@@ -1,0 +1,6 @@
+# executable
+nand2tetris-vm-to-hack-translator
+
+# workspaces
+.idea
+.vscode
