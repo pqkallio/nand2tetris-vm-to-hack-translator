@@ -58,8 +58,11 @@ func (t *translator) translate() error {
 func (t *translator) pop(row *vmRow) []string {
 	switch row.mem.seg {
 	case "argument":
+		fallthrough
 	case "local":
+		fallthrough
 	case "this":
+		fallthrough
 	case "that":
 		return popToMemSeg(row)
 	case "static":
