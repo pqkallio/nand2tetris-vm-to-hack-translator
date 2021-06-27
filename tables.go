@@ -6,3 +6,9 @@ var vmMemPtrToAsmMemPtr = map[string]string{
 	"this": "THIS",
 	"that": "THAT",
 }
+
+var jumps = map[string]string{
+	"eq": "JEQ",
+	"lt": "JLT",
+	"gt": "JGT",
+}

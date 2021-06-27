@@ -23,8 +23,9 @@ func main() {
 	defer vmFile.Close()
 
 	vms := strings.SplitN(Reverse(vmFileName), ".", 2)
-	fn := Reverse(vms[len(vms) - 1])
-	asmFileName := fn + ".asm"
+	asmFileName := Reverse(vms[len(vms) - 1]) + ".asm"
+	vms = strings.SplitN(vms[len(vms) - 1], "/", 2)
+	fn := Reverse(vms[0])
 
 	asmFile, err := os.Create(asmFileName)
 	if err != nil {

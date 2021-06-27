@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -217,37 +218,59 @@ func (t *translator) popStatic() translatorFunc {
 func (t *translator) arithmeticLogical(row *vmRow) []string {
 	switch row.op {
 	case "add":
-		return binOp("D+M")
+		return binOp("D=D+M")
 	case "sub":
+		return binOp("D=M-D")
 	case "eq":
+		fallthrough
 	case "gt":
+		fallthrough
 	case "lt":
-		return binOp("D-M")
+		return binOp(t.logical(row)...)
 	case "neg":
-		return unOp("-M")
+		return unOp("D=-M")
 	case "and":
-		return binOp("D&M")
+		return binOp("D=D&M")
 	case "or":
-		return binOp("D|M")
+		return binOp("D=D|M")
 	case "not":
-		return unOp("!M")
+		return unOp("D=!M")
 
 	}
 
 	return []string{}
 }
 
-func unOp(op string) []string {
+func (t *translator) logical(row *vmRow) []string {
+	lblPrefix := t.filename + "." + strconv.Itoa(row.rowIdx)
+	trueLbl := lblPrefix + "." + "TRUE"
+	endLbl := lblPrefix + "." + "END"
+
+	return []string{
+		"D=M-D",
+		"@" + trueLbl,
+		"D;" + jumps[row.op],
+		"@" + endLbl,
+		"D=0;JMP",
+		"(" + trueLbl + ")",
+		"D=-1",
+		"(" + endLbl + ")",
+		"@SP",
+		"A=M",
+	}
+}
+
+func unOp(op ...string) []string {
 	return append(
 		append(
 			secondOrUnaryOperand,
-			op,
+			op...,
 		),
 		postOper...,
 	)
 }
 
-func binOp(op string) []string {
+func binOp(op ...string) []string {
 	return append(
 		append(
 			append(
@@ -259,7 +282,7 @@ func binOp(op string) []string {
 				},
 				secondOrUnaryOperand...,
 			),
-			op,
+			op...,
 		),
 		postOper...,
 	)

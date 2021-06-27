@@ -8,12 +8,13 @@ import (
 
 type parser struct {
 	scanner *bufio.Scanner
+	rowIdx int
 }
 
 func NewParser(in *os.File) *parser {
 	scanner := bufio.NewScanner(in)
 
-	return &parser{scanner}
+	return &parser{scanner, -1}
 }
 
 const (
@@ -31,6 +32,13 @@ type vmRow struct {
 	opType int
 	op string
 	mem mem
+	rowIdx int
+}
+
+func (p *parser) nextRowIdx() int {
+	p.rowIdx++
+
+	return p.rowIdx
 }
 
 func (p *parser) parseNext() *vmRow {
@@ -43,6 +51,8 @@ func (p *parser) parseNext() *vmRow {
 		}
 
 		row.command = command
+		row.rowIdx = p.nextRowIdx()
+
 		split := strings.Split(command, " ")
 
 		switch len(split) {
