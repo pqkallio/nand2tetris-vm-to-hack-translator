@@ -134,8 +134,11 @@ func popAddr(m *mem) []string {
 func (t *translator) push(row *vmRow) []string {
 	switch row.mem.seg {
 	case "argument":
+		fallthrough
 	case "local":
+		fallthrough
 	case "this":
+		fallthrough
 	case "that":
 		return pushFromMemSeg(row)
 	case "constant":
@@ -163,7 +166,7 @@ func pushPointer(row *vmRow) []string {
 	return append(
 		[]string{
 			addr,
-			"D=A",
+			"D=M",
 		},
 		pushToStack...,
 	)
