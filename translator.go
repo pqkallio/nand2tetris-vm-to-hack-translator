@@ -311,7 +311,7 @@ func (t *translator) Func(row *vmRow) []string {
 		"M=M+1",
 		"@R13",
 		"M=M-1",
-		"@" + t.labelForFunc(&args),
+		"@" + loopLabel,
 		"0;JMP",
 		"(" + loopEndLabel + ")",
 	}
