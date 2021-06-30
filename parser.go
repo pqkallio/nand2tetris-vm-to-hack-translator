@@ -11,6 +11,28 @@ type parser struct {
 	rowIdx int
 }
 
+type funcCallArgs struct {
+	name string
+	nArgs string
+}
+
+type pushPopArgs struct {
+	op string
+	mem mem
+}
+
+type labelArgs struct {
+	name string
+}
+
+type arithmeticLogicalArgs struct {
+	op string
+}
+
+type gotoArgs struct {
+	label string
+}
+
 func NewParser(in *os.File) *parser {
 	scanner := bufio.NewScanner(in)
 
@@ -20,6 +42,12 @@ func NewParser(in *os.File) *parser {
 const (
 	ArithmeticLogical = iota
 	PushPop
+	Func
+	Call
+	Return
+	Label
+	Goto
+	IfGoto
 )
 
 type mem struct {
@@ -30,9 +58,8 @@ type mem struct {
 type vmRow struct {
 	command string
 	opType int
-	op string
-	mem mem
 	rowIdx int
+	args interface{}
 }
 
 func (p *parser) nextRowIdx() int {
@@ -57,16 +84,51 @@ func (p *parser) parseNext() *vmRow {
 
 		switch len(split) {
 		case 1:
-			row.opType = ArithmeticLogical
-			row.op = split[0]
-		case 3:
-			row.opType = PushPop
-			row.op = split[0]
-			row.mem = mem{
-				seg:    split[1],
-				offset: split[2],
+			switch split[0] {
+			case "return":
+				row.opType = Return
+			default:
+				row.opType = ArithmeticLogical
+				row.args = arithmeticLogicalArgs{op: split[0]}
 			}
-
+		case 2:
+			switch split[0] {
+			case "label":
+				row.opType = Label
+				row.args = labelArgs{name: split[1]}
+			case "goto":
+				row.opType = Goto
+				row.args = gotoArgs{label: split[1]}
+			case "if-goto":
+				row.opType = IfGoto
+				row.args = gotoArgs{label: split[1]}
+			}
+		case 3:
+			switch split[0] {
+			case "function":
+				row.opType = Func
+				row.args = funcCallArgs{
+					name:       split[1],
+					nArgs: split[2],
+				}
+			case "call":
+				row.opType = Call
+				row.args = funcCallArgs{
+					name: split[1],
+					nArgs:    split[2],
+				}
+			case "push":
+				fallthrough
+			case "pop":
+				row.opType = PushPop
+				row.args = pushPopArgs{
+					op:  split[0],
+					mem: mem{
+						seg:    split[1],
+						offset: split[2],
+					},
+				}
+			}
 		}
 
 		return &row

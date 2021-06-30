@@ -25,13 +25,30 @@ func (t *translator) translate() error {
 	for row != nil {
 		var translated []string
 
-		switch row.op {
-		case "push":
-			translated = t.push(row)
-		case "pop":
-			translated = t.pop(row)
-		default:
+		switch row.opType {
+		case PushPop:
+			args := row.args.(pushPopArgs)
+
+			switch args.op {
+			case "push":
+				translated = t.push(&args.mem)
+			case "pop":
+				translated = t.pop(&args.mem)
+			}
+		case ArithmeticLogical:
 			translated = t.arithmeticLogical(row)
+		case Func:
+			translated = t.Func(row)
+		case Call:
+			translated = t.Call(row)
+		case Return:
+			translated = t.Return(row)
+		case Label:
+			translated = t.Label(row)
+		case Goto:
+			translated = t.Goto(row)
+		case IfGoto:
+			translated = t.IfGoto(row)
 		}
 
 		output := append(
@@ -55,8 +72,8 @@ func (t *translator) translate() error {
 	return nil
 }
 
-func (t *translator) pop(row *vmRow) []string {
-	switch row.mem.seg {
+func (t *translator) pop(mem *mem) []string {
+	switch mem.seg {
 	case "argument":
 		fallthrough
 	case "local":
@@ -64,22 +81,22 @@ func (t *translator) pop(row *vmRow) []string {
 	case "this":
 		fallthrough
 	case "that":
-		return popToMemSeg(row)
+		return popToMemSeg(mem)
 	case "static":
-		return t.popStatic()(row)
+		return t.popStatic()(mem)
 	case "temp":
-		return popTemp(row)
+		return popTemp(mem)
 	case "pointer":
-		return popPointer(row)
+		return popPointer(mem)
 	}
 
 	return []string{}
 }
 
-func popPointer(row *vmRow) []string {
+func popPointer(mem *mem) []string {
 	addr := "@THIS"
 
-	if row.mem.offset != "0" {
+	if mem.offset != "0" {
 		addr = "@THAT"
 	}
 
@@ -90,31 +107,27 @@ func popPointer(row *vmRow) []string {
 	)
 }
 
-func popTemp(row *vmRow) []string {
-	return append(
-		append(
-			[]string{
-				"@5",
-				"D=A",
-				"@" + row.mem.offset,
-				"A=D+A",
-				"D=A",
-				"@R13",
-				"M=D",
-			},
-			popFromStack...,
-		),
-		setData...,
+func popTemp(mem *mem) []string {
+	return MultiAppend(
+		[]string{
+			"@5",
+			"D=A",
+			"@" + mem.offset,
+			"A=D+A",
+			"D=A",
+			"@R13",
+			"M=D",
+		},
+		popFromStack,
+		setData,
 	)
 }
 
-func popToMemSeg(row *vmRow) []string {
-	return append(
-		append(
-			popAddr(&row.mem),
-			popFromStack...,
-		),
-		setData...,
+func popToMemSeg(mem *mem) []string {
+	return MultiAppend(
+		popAddr(mem),
+		popFromStack,
+		setData,
 	)
 }
 
@@ -131,8 +144,8 @@ func popAddr(m *mem) []string {
 	}
 }
 
-func (t *translator) push(row *vmRow) []string {
-	switch row.mem.seg {
+func (t *translator) push(mem *mem) []string {
+	switch mem.seg {
 	case "argument":
 		fallthrough
 	case "local":
@@ -140,26 +153,26 @@ func (t *translator) push(row *vmRow) []string {
 	case "this":
 		fallthrough
 	case "that":
-		return pushFromMemSeg(row)
+		return pushFromMemSeg(mem)
 	case "constant":
-		return pushConst(row)
+		return pushConst(mem)
 	case "static":
-		return t.pushStatic()(row)
+		return t.pushStatic()(mem)
 	case "temp":
-		return pushTemp(row)
+		return pushTemp(mem)
 	case "pointer":
-		return pushPointer(row)
+		return pushPointer(mem)
 	}
 
 	return []string{}
 }
 
-type translatorFunc func(row *vmRow) []string
+type translatorFunc func(mem *mem) []string
 
-func pushPointer(row *vmRow) []string {
+func pushPointer(mem *mem) []string {
 	addr := "@THIS"
 
-	if row.mem.offset != "0" {
+	if mem.offset != "0" {
 		addr = "@THAT"
 	}
 
@@ -172,12 +185,12 @@ func pushPointer(row *vmRow) []string {
 	)
 }
 
-func pushTemp(row *vmRow) []string {
+func pushTemp(mem *mem) []string {
 	return append(
 		[]string{
 			"@5",
 			"D=A",
-			"@" + row.mem.offset,
+			"@" + mem.offset,
 			"A=D+A",
 			"D=M",
 		},
@@ -185,25 +198,25 @@ func pushTemp(row *vmRow) []string {
 	)
 }
 
-func pushConst(row *vmRow) []string {
+func pushConst(mem *mem) []string {
 	return append(
 		[]string {
-			"@" + row.mem.offset,
+			"@" + mem.offset,
 			"D=A",
 		},
 		pushToStack...,
 	)
 }
 
-func pushFromMemSeg(row *vmRow) []string {
-	return append(fromMem(&row.mem), pushToStack...)
+func pushFromMemSeg(mem *mem) []string {
+	return append(fromMem(mem), pushToStack...)
 }
 
 func (t *translator) pushStatic() translatorFunc {
-	return func(row *vmRow) []string {
+	return func(mem *mem) []string {
 		return append(
 			[]string{
-				"@" + t.filename + "." + row.mem.offset,
+				"@" + t.filename + "." + mem.offset,
 				"D=M",
 			},
 			pushToStack...,
@@ -212,17 +225,19 @@ func (t *translator) pushStatic() translatorFunc {
 }
 
 func (t *translator) popStatic() translatorFunc {
-	return func(row *vmRow) []string {
+	return func(mem *mem) []string {
 		return append(
 			popFromStack,
-			"@" + t.filename + "." + row.mem.offset,
+			"@" + t.filename + "." + mem.offset,
 			"M=D",
 		)
 	}
 }
 
 func (t *translator) arithmeticLogical(row *vmRow) []string {
-	switch row.op {
+	args := row.args.(arithmeticLogicalArgs)
+
+	switch args.op {
 	case "add":
 		return binOp("D=D+M")
 	case "sub":
@@ -248,6 +263,8 @@ func (t *translator) arithmeticLogical(row *vmRow) []string {
 }
 
 func (t *translator) logical(row *vmRow) []string {
+	args := row.args.(arithmeticLogicalArgs)
+
 	lblPrefix := t.filename + "." + strconv.Itoa(row.rowIdx)
 	trueLbl := lblPrefix + "." + "TRUE"
 	endLbl := lblPrefix + "." + "END"
@@ -255,7 +272,7 @@ func (t *translator) logical(row *vmRow) []string {
 	return []string{
 		"D=M-D",
 		"@" + trueLbl,
-		"D;" + jumps[row.op],
+		"D;" + jumps[args.op],
 		"@" + endLbl,
 		"D=0;JMP",
 		"(" + trueLbl + ")",
@@ -266,31 +283,200 @@ func (t *translator) logical(row *vmRow) []string {
 	}
 }
 
+func (t *translator) labelForFunc(args *funcCallArgs) string {
+	return t.filename + "." + args.name
+}
+
+func (t *translator) Func(row *vmRow) []string {
+	args := row.args.(funcCallArgs)
+
+	loopLabel := t.labelForFunc(&args) + ".initLCL"
+	loopEndLabel := loopLabel + ".end"
+
+	return []string{
+		"(" + t.labelForFunc(&args) + ")",
+		"@" + args.nArgs,
+		"D=A",
+		"@R13",
+		"M=D",
+		"(" + loopLabel + ")",
+		"@R13",
+		"D=M",
+		"@" + loopEndLabel,
+		"D;JEQ",
+		"@SP",
+		"A=M",
+		"M=0",
+		"@SP",
+		"M=M+1",
+		"@R13",
+		"M=M-1",
+		"@" + t.labelForFunc(&args),
+		"0;JMP",
+		"(" + loopEndLabel + ")",
+	}
+}
+
+func (t *translator) Call(row *vmRow) []string {
+	args := row.args.(funcCallArgs)
+	retAddr := t.filename + "." + strconv.Itoa(row.rowIdx) + "retAddr"
+	funcName := t.filename + "." + args.name
+
+	return MultiAppend(
+		[]string{
+			"@" + retAddr,
+			"D=A",
+			"@SP",
+			"A=M",
+			"M=D",
+			"@SP",
+			"M=M+1",
+		},
+		pushAddrToStack("LCL"),
+		pushAddrToStack("ARG"),
+		pushAddrToStack("THIS"),
+		pushAddrToStack("THAT"),
+		[]string{
+			"@SP",
+			"D=M",
+			"@5",
+			"D=D-A",
+			"@" + args.nArgs,
+			"D=D-A",
+			"@ARG",
+			"M=D",
+			"@SP",
+			"D=M",
+			"@LCL",
+			"M=D",
+			"@" + funcName,
+			"0;JMP",
+			"(" + retAddr + ")",
+		},
+	)
+}
+
+func (t *translator) Return(_ *vmRow) []string {
+	return []string{
+		"@LCL",
+		"D=M",
+		"@R13",
+		"M=D",
+		"@5",
+		"A=D-A",
+		"D=M",
+		"@R14",
+		"M=D",
+		"@SP",
+		"M=M-1",
+		"A=M",
+		"D=M",
+		"@ARG",
+		"A=M",
+		"M=D",
+		"@ARG",
+		"A=M",
+		"D=A+1",
+		"@SP",
+		"M=D",
+		"@R13",
+		"D=M",
+		"@1",
+		"A=D-A",
+		"D=M",
+		"@THAT",
+		"M=D",
+		"@R13",
+		"D=M",
+		"@2",
+		"A=D-A",
+		"D=M",
+		"@THIS",
+		"M=D",
+		"@R13",
+		"D=M",
+		"@3",
+		"A=D-A",
+		"D=M",
+		"@ARG",
+		"M=D",
+		"@R13",
+		"D=M",
+		"@4",
+		"A=D-A",
+		"D=M",
+		"@LCL",
+		"M=D",
+		"@R14",
+		"A=M",
+		"0;JMP",
+	}
+}
+
+func (t *translator) Label(row *vmRow) []string {
+	args := row.args.(labelArgs)
+
+	return []string{
+		"(" + t.filename + "." + args.name + ")",
+	}
+}
+
+func (t *translator) Goto(row *vmRow) []string {
+	args := row.args.(gotoArgs)
+
+	return []string{
+		"@" + args.label,
+		"0;JMP",
+	}
+}
+
+func (t *translator) IfGoto(row *vmRow) []string {
+	args := row.args.(gotoArgs)
+
+	return []string{
+		"@SP",
+		"M=M-1",
+		"A=M",
+		"D=M",
+		"@R13",
+		"M=-1",
+		"D=D-M",
+		"@" + args.label,
+		"D;JEQ",
+	}
+}
+
+func pushAddrToStack(addr string) []string{
+	return []string{
+		"@" + addr,
+		"D=M",
+		"@SP",
+		"A=M",
+		"M=D",
+		"@SP",
+		"M=M+1",
+	}
+}
+
 func unOp(op ...string) []string {
-	return append(
-		append(
-			secondOrUnaryOperand,
-			op...,
-		),
-		postOper...,
+	return MultiAppend(
+		secondOrUnaryOperand,
+		op,
+		postOper,
 	)
 }
 
 func binOp(op ...string) []string {
-	return append(
-		append(
-			append(
-				[]string{
-					"@SP",
-					"M=M-1",
-					"A=M",
-					"D=M",
-				},
-				secondOrUnaryOperand...,
-			),
-			op...,
-		),
-		postOper...,
+	return MultiAppend(
+		[]string{
+			"@SP",
+			"M=M-1",
+			"A=M",
+			"D=M",
+		},
+		secondOrUnaryOperand,
+		op,
+		postOper,
 	)
 }
 
