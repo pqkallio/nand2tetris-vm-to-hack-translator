@@ -1,10 +1,10 @@
 package main
 
 var vmMemPtrToAsmMemPtr = map[string]string{
-	"local": "LCL",
+	"local":    "LCL",
 	"argument": "ARG",
-	"this": "THIS",
-	"that": "THAT",
+	"this":     "THIS",
+	"that":     "THAT",
 }
 
 var jumps = map[string]string{

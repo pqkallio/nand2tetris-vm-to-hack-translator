@@ -2,25 +2,29 @@ package main
 
 import (
 	"bufio"
+	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
 )
 
 type translator struct {
-	parser *parser
 	writer *bufio.Writer
-	filename string
+	data   pathData
+	ctx    *context
 }
 
-func NewTranslator(p *parser, out *os.File, filename string) *translator {
+func NewTranslator(out *os.File, data pathData) *translator {
 	writer := bufio.NewWriter(out)
 
-	return &translator{p, writer, filename}
+	return &translator{writer, data, nil}
 }
 
-func (t *translator) translate() error {
-	row := t.parser.parseNext()
+func (t *translator) translateFile(f *os.File) error {
+	p := NewParser(f)
+
+	row := p.parseNext()
 
 	for row != nil {
 		var translated []string
@@ -31,9 +35,9 @@ func (t *translator) translate() error {
 
 			switch args.op {
 			case "push":
-				translated = t.push(&args.mem)
+				translated = t.push(&args)
 			case "pop":
-				translated = t.pop(&args.mem)
+				translated = t.pop(&args)
 			}
 		case ArithmeticLogical:
 			translated = t.arithmeticLogical(row)
@@ -66,14 +70,69 @@ func (t *translator) translate() error {
 			return err
 		}
 
-		row = t.parser.parseNext()
+		row = p.parseNext()
+	}
+
+	return nil
+
+}
+
+func (t *translator) write(output []string) error {
+	if _, err := t.writer.Write([]byte(strings.Join(output, "\n") + "\n")); err != nil {
+		return err
+	}
+
+	if err := t.writer.Flush(); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (t *translator) pop(mem *mem) []string {
-	switch mem.seg {
+func (t *translator) writeBootSector() error {
+	return t.write(MultiAppend(
+		[]string{
+			"@256",
+			"D=A",
+			"@SP",
+			"M=D",
+		},
+		pushAddrToStack("LCL"),
+		pushAddrToStack("LCL"),
+		pushAddrToStack("ARG"),
+		pushAddrToStack("THIS"),
+		pushAddrToStack("THAT"),
+		[]string{
+			"@Sys.init",
+			"0;JMP",
+		},
+	))
+}
+
+func (t *translator) translate() error {
+	if t.data.pathType == dir {
+		if err := t.writeBootSector(); err != nil {
+			return err
+		}
+	}
+
+	for _, f := range t.data.files {
+		ff, err := os.Open(f.fullPath)
+		if err != nil {
+			log.Fatalf("Cannot open file %s", f.fullPath)
+		}
+
+		err = t.translateFile(ff)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t *translator) pop(args *pushPopArgs) []string {
+	switch args.mem.seg {
 	case "argument":
 		fallthrough
 	case "local":
@@ -81,13 +140,13 @@ func (t *translator) pop(mem *mem) []string {
 	case "this":
 		fallthrough
 	case "that":
-		return popToMemSeg(mem)
+		return popToMemSeg(&args.mem)
 	case "static":
-		return t.popStatic()(mem)
+		return popStatic(args)
 	case "temp":
-		return popTemp(mem)
+		return popTemp(&args.mem)
 	case "pointer":
-		return popPointer(mem)
+		return popPointer(&args.mem)
 	}
 
 	return []string{}
@@ -144,8 +203,8 @@ func popAddr(m *mem) []string {
 	}
 }
 
-func (t *translator) push(mem *mem) []string {
-	switch mem.seg {
+func (t *translator) push(args *pushPopArgs) []string {
+	switch args.mem.seg {
 	case "argument":
 		fallthrough
 	case "local":
@@ -153,21 +212,19 @@ func (t *translator) push(mem *mem) []string {
 	case "this":
 		fallthrough
 	case "that":
-		return pushFromMemSeg(mem)
+		return pushFromMemSeg(&args.mem)
 	case "constant":
-		return pushConst(mem)
+		return pushConst(&args.mem)
 	case "static":
-		return t.pushStatic()(mem)
+		return pushStatic(args)
 	case "temp":
-		return pushTemp(mem)
+		return pushTemp(&args.mem)
 	case "pointer":
-		return pushPointer(mem)
+		return pushPointer(&args.mem)
 	}
 
 	return []string{}
 }
-
-type translatorFunc func(mem *mem) []string
 
 func pushPointer(mem *mem) []string {
 	addr := "@THIS"
@@ -200,7 +257,7 @@ func pushTemp(mem *mem) []string {
 
 func pushConst(mem *mem) []string {
 	return append(
-		[]string {
+		[]string{
 			"@" + mem.offset,
 			"D=A",
 		},
@@ -212,26 +269,22 @@ func pushFromMemSeg(mem *mem) []string {
 	return append(fromMem(mem), pushToStack...)
 }
 
-func (t *translator) pushStatic() translatorFunc {
-	return func(mem *mem) []string {
-		return append(
-			[]string{
-				"@" + t.filename + "." + mem.offset,
-				"D=M",
-			},
-			pushToStack...,
-		)
-	}
+func pushStatic(args *pushPopArgs) []string {
+	return append(
+		[]string{
+			"@" + args.fileName + "." + args.mem.offset,
+			"D=M",
+		},
+		pushToStack...,
+	)
 }
 
-func (t *translator) popStatic() translatorFunc {
-	return func(mem *mem) []string {
-		return append(
-			popFromStack,
-			"@" + t.filename + "." + mem.offset,
-			"M=D",
-		)
-	}
+func popStatic(args *pushPopArgs) []string {
+	return append(
+		popFromStack,
+		"@"+args.fileName+"."+args.mem.offset,
+		"M=D",
+	)
 }
 
 func (t *translator) arithmeticLogical(row *vmRow) []string {
@@ -265,7 +318,7 @@ func (t *translator) arithmeticLogical(row *vmRow) []string {
 func (t *translator) logical(row *vmRow) []string {
 	args := row.args.(arithmeticLogicalArgs)
 
-	lblPrefix := t.filename + "." + strconv.Itoa(row.rowIdx)
+	lblPrefix := args.op + "." + strconv.Itoa(row.rowIdx)
 	trueLbl := lblPrefix + "." + "TRUE"
 	endLbl := lblPrefix + "." + "END"
 
@@ -283,18 +336,15 @@ func (t *translator) logical(row *vmRow) []string {
 	}
 }
 
-func (t *translator) labelForFunc(args *funcCallArgs) string {
-	return t.filename + "." + args.name
-}
-
 func (t *translator) Func(row *vmRow) []string {
 	args := row.args.(funcCallArgs)
+	t.ctx = newContext(args.name)
 
-	loopLabel := t.labelForFunc(&args) + ".initLCL"
+	loopLabel := args.name + ".initLCL"
 	loopEndLabel := loopLabel + ".end"
 
 	return []string{
-		"(" + t.labelForFunc(&args) + ")",
+		"(" + args.name + ")",
 		"@" + args.nArgs,
 		"D=A",
 		"@R13",
@@ -319,8 +369,8 @@ func (t *translator) Func(row *vmRow) []string {
 
 func (t *translator) Call(row *vmRow) []string {
 	args := row.args.(funcCallArgs)
-	retAddr := t.filename + "." + strconv.Itoa(row.rowIdx) + "retAddr"
-	funcName := t.filename + "." + args.name
+	retAddr := fmt.Sprintf("%s$ret.%d", t.ctx.funcName, t.ctx.nextIdx())
+	funcName := args.name
 
 	return MultiAppend(
 		[]string{
@@ -416,22 +466,37 @@ func (t *translator) Return(_ *vmRow) []string {
 func (t *translator) Label(row *vmRow) []string {
 	args := row.args.(labelArgs)
 
+	label := args.name
+	if t.ctx != nil {
+		label = t.ctx.funcName + "$" + label
+	}
+
 	return []string{
-		"(" + t.filename + "." + args.name + ")",
+		"(" + label + ")",
 	}
 }
 
 func (t *translator) Goto(row *vmRow) []string {
 	args := row.args.(gotoArgs)
 
+	label := args.label
+	if t.ctx != nil {
+		label = t.ctx.funcName + "$" + label
+	}
+
 	return []string{
-		"@" + args.label,
+		"@" + label,
 		"0;JMP",
 	}
 }
 
 func (t *translator) IfGoto(row *vmRow) []string {
 	args := row.args.(gotoArgs)
+
+	label := args.label
+	if t.ctx != nil {
+		label = t.ctx.funcName + "$" + label
+	}
 
 	return []string{
 		"@SP",
@@ -441,12 +506,12 @@ func (t *translator) IfGoto(row *vmRow) []string {
 		"@R13",
 		"M=-1",
 		"D=D-M",
-		"@" + args.label,
+		"@" + label,
 		"D;JEQ",
 	}
 }
 
-func pushAddrToStack(addr string) []string{
+func pushAddrToStack(addr string) []string {
 	return []string{
 		"@" + addr,
 		"D=M",
@@ -522,4 +587,19 @@ func fromMem(mem *mem) []string {
 		"A=D+A",
 		"D=M",
 	}
+}
+
+type context struct {
+	funcName string
+	idx      int
+}
+
+func newContext(funcName string) *context {
+	return &context{funcName, -1}
+}
+
+func (c *context) nextIdx() int {
+	c.idx++
+
+	return c.idx
 }
