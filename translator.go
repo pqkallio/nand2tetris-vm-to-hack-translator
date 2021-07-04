@@ -505,9 +505,9 @@ func (t *translator) IfGoto(row *vmRow) []string {
 		"D=M",
 		"@R13",
 		"M=-1",
-		"D=D-M",
+		"D=D&M",
 		"@" + label,
-		"D;JEQ",
+		"D;JNE",
 	}
 }
 
