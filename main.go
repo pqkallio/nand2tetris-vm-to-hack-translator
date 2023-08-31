@@ -96,5 +96,8 @@ func main() {
 
 	t := NewTranslator(asmFile, data)
 
-	t.translate()
+	err = t.translate()
+	if err != nil {
+		log.Printf("the translation finished with errors: %w", err)
+	}
 }
